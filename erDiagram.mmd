@@ -1,0 +1,60 @@
+erDiagram
+    CALLES ||--o{ FAMILIAS : "alberga (1:N)"
+    FAMILIAS ||--o{ MIEMBROS : "posee (1:N)"
+    FAMILIAS ||--o{ REGISTROS_GAS : "solicita (1:N)"
+
+    CALLES {
+        int id PK
+        string sector
+        string nombre
+        string numero
+    }
+
+    USUARIOS {
+        int id PK
+        string nombre
+        string apellido
+        string tipo_id
+        string cedula UK
+        string correo UK
+        string telefono
+        string rol
+        date fecha_nacimiento
+        string clave_hash
+        string pregunta1
+        string respuesta1
+        string pregunta2
+        string respuesta2
+    }
+
+    FAMILIAS {
+        int id PK
+        string nombres_jefe
+        string apellidos_jefe
+        string tipo_id
+        string cedula_jefe UK
+        string telefono_jefe
+        date fecha_nacimiento_jefe
+        int calle_id FK
+        string casa_num
+    }
+
+    MIEMBROS {
+        int id PK
+        string nombres
+        string apellidos
+        string tipo_id
+        string cedula
+        date fecha_nacimiento
+        string parentesco
+        int familia_id FK
+    }
+
+    REGISTROS_GAS {
+        int id PK
+        int familia_id FK
+        int kg10
+        int kg18
+        int kg27
+        int kg43
+    }
