@@ -152,19 +152,34 @@ def main(pagina: ft.Page):
     def construir_vista(ruta):
         mostrar_navegacion = ruta not in ["/login", "/registro_usuario"]
 
-        # Rutas que devuelven el diccionario {"vista": ..., "actualizar": ...}
-        if ruta in ["/familia", "/gas", "/adulto_mayor", "/proteccion_integral"]:
+        # 1. Agregamos "/registro_proteccion_integral" a las rutas con formato de diccionario
+        rutas_con_diccionario = [
+            "/familia",
+            "/gas",
+            "/adulto_mayor",
+            "/proteccion_integral",
+            "/registro_proteccion_integral"
+        ]
+
+        if ruta in rutas_con_diccionario:
             if ruta == "/familia":
                 resultado = vista_familia(pagina)
             elif ruta == "/gas":
                 resultado = vista_gas(pagina)
             elif ruta == "/adulto_mayor":
                 resultado = vista_adulto_mayor(pagina)
-            else:
+            elif ruta == "/proteccion_integral":
                 resultado = vista_proteccion_integral(pagina)
+            elif ruta == "/registro_proteccion_integral":
+                resultado = vista_registro_proteccion_integral(pagina)
 
-            vista = resultado["vista"]
-            actualizar = resultado["actualizar"]
+            # Validamos si la vista devolvió un diccionario o el Container directamente
+            if isinstance(resultado, dict):
+                vista = resultado.get("vista")
+                actualizar = resultado.get("actualizar")
+            else:
+                vista = resultado
+                actualizar = None
 
             return ft.View(
                 route=ruta,
@@ -173,13 +188,18 @@ def main(pagina: ft.Page):
                     bgcolor=COLOR_VERDE,
                     center_title=True,
                     actions=[
-                        ft.IconButton(icon=ft.Icons.HOME, tooltip="Inicio", on_click=lambda e: pagina.go("/panel"))
+                        ft.IconButton(
+                            icon=ft.Icons.HOME,
+                            tooltip="Inicio",
+                            on_click=lambda e: pagina.go("/panel")
+                        )
                     ],
                 ) if mostrar_navegacion else None,
                 controls=[contenedor_de_vista(vista)],
                 drawer=pagina.drawer if mostrar_navegacion else None,
                 padding=0,
             ), actualizar
+
         else:
             contenido = construir_contenido(ruta)
             return ft.View(
