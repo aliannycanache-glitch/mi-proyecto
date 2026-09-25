@@ -114,7 +114,7 @@ def vista_proteccion_integral(pagina: ft.Page = None):
 
         resumen = ft.Row(
             [
-                tarjeta_resumen("Personas con ayudas", total_ayudas, "Beneficiarios / Bonos", ft.Icons.VOLUNTEER_AUTOMATION, PASTEL_VERDE_FONDO, PASTEL_VERDE_PRIMARIO),
+                tarjeta_resumen("Personas con ayudas", total_ayudas, "Beneficiarios / Bonos", ft.Icons.HANDSHAKE, PASTEL_VERDE_FONDO, PASTEL_VERDE_PRIMARIO),
                 tarjeta_resumen("Casos de protección", total_casos, "Casos vulnerables", ft.Icons.SECURITY, PASTEL_LAVANDA_FONDO, PASTEL_LAVANDA_TEXTO),
             ],
             wrap=True,
