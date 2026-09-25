@@ -124,7 +124,7 @@ def main(pagina: ft.Page):
         elif ruta == "/registro_gas":
             return vista_registro_gas()
         elif ruta == "/residencia":
-            return vista_residencia(pagina)
+            return vista_residencia()
         elif ruta.startswith("/calles"):
             return vista_calles()
         elif ruta.startswith("/registro_calle"):
@@ -242,4 +242,4 @@ def main(pagina: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.app(target=main)
+   ft.app(target=main)
