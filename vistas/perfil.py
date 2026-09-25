@@ -8,7 +8,7 @@ if str(ROOT) not in sys.path:
 import flet as ft
 from colores import COLOR_VERDE, COLOR_GRIS, COLOR_BLANCO, COLOR_NEGRO, COLOR_ROJO
 from datetime import datetime
-from modelo import SessionLocal, Usuario   # 👈 Importamos el modelo y la sesión
+from modelo import SessionLocal, Usuario 
 
 # Validadores
 def validar_telefono(e):

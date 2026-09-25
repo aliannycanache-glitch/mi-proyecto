@@ -175,7 +175,7 @@ def vista_registro():
                 enlace_login
             ], alignment=ft.MainAxisAlignment.CENTER),
             ft.Container(height=8),
-            ft.Text("v1.2", size=12, color=COLOR_GRIS)
+            ft.Text("v1.6", size=12, color=COLOR_GRIS)
         ],
         alignment=ft.MainAxisAlignment.CENTER,
         horizontal_alignment=ft.CrossAxisAlignment.CENTER,

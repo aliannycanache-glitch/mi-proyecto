@@ -21,9 +21,35 @@ from modelo import Calle, Familia, Miembro, SessionLocal
 from sqlalchemy.orm import joinedload
 from utiles import (
     abrir_datepicker_fecha_nacimiento,
+    abrir_datepicker_solo_fecha,
+    calcular_edad_detallada,
     validar_cedula,
     validar_telefono,
 )
+
+
+def _edad_en_meses(fecha_nacimiento, hoy=None):
+    if not fecha_nacimiento:
+        return None
+    hoy = hoy or datetime.date.today()
+    meses = (hoy.year - fecha_nacimiento.year) * 12 + hoy.month - fecha_nacimiento.month
+    if hoy.day < fecha_nacimiento.day:
+        meses -= 1
+    return max(meses, 0)
+
+
+def _persona_esta_en_rango(fecha_nacimiento, rango):
+    meses = _edad_en_meses(fecha_nacimiento)
+    if meses is None:
+        return False
+    limites = {
+        "Bebés (0-23 meses)": (0, 23),
+        "Niños (2-11 años)": (24, 143),
+        "Adolescentes (12-17 años)": (144, 215),
+        "Adultos (18-59 años)": (216, 719),
+        "Adultos mayores (60+)": (720, None),
+    }.get(rango)
+    return limites is None or (meses >= limites[0] and (limites[1] is None or meses <= limites[1]))
 
 
 def vista_familia(pagina: ft.Page):
@@ -33,13 +59,16 @@ def vista_familia(pagina: ft.Page):
 
     buscador = ft.Ref[ft.TextField]()
     filtro_calle = ft.Ref[ft.Dropdown]()
+    tipo_busqueda = ft.Ref[ft.Dropdown]()
     tabla = ft.Ref[ft.DataTable]()
     pie_tabla = ft.Ref[ft.Row]()
     tarjeta_familias = ft.Ref[ft.Container]()
     tarjeta_personas = ft.Ref[ft.Container]()
+    tarjeta_menores = ft.Ref[ft.Container]()
+    tarjeta_mayores = ft.Ref[ft.Container]()
     resultados_filtrados = []
 
-    # 📊 FilePicker para Exportar a Excel
+    # FilePicker para Exportar a Excel
     def guardar_excel_seleccionado(e: ft.FilePickerResultEvent):
         if e.path:
             ruta = e.path if e.path.endswith(".xlsx") else f"{e.path}.xlsx"
@@ -68,7 +97,7 @@ def vista_familia(pagina: ft.Page):
     )
     pagina.overlay.append(file_picker_exportar_excel)
 
-    # 🗄️ FilePicker para Exportar Respaldo JSON
+    # FilePicker para Exportar Respaldo JSON
     def guardar_json_seleccionado(e: ft.FilePickerResultEvent):
         if e.path:
             ruta = e.path if e.path.endswith(".json") else f"{e.path}.json"
@@ -97,11 +126,33 @@ def vista_familia(pagina: ft.Page):
     )
     pagina.overlay.append(file_picker_exportar_json)
 
-    # 📄 FilePicker para Exportar PDF
+    # FilePicker para Exportar PDF
+# FilePicker para Exportar PDF
+    def exportar_pdf(e: ft.FilePickerResultEvent):
+        if e.path:
+            ruta = e.path if e.path.endswith(".pdf") else f"{e.path}.pdf"
+            exito = generar_pdf_familias(resultados_filtrados, ruta)
+
+            mensaje = (
+                f"PDF generado con éxito en:\n{ruta}"
+                if exito
+                else "Ocurrió un error al generar el PDF."
+            )
+            dlg = ft.AlertDialog(
+                title=ft.Text("Exportación PDF"),
+                content=ft.Text(mensaje),
+                actions=[
+                    ft.TextButton(
+                        "Aceptar", on_click=lambda ev: ev.page.close(dlg)
+                    )
+                ],
+            )
+            e.page.open(dlg)
+        
     file_picker = ft.FilePicker(on_result=lambda e: exportar_pdf(e))
     pagina.overlay.append(file_picker)
 
-    # 📥 FilePicker para Importar Excel
+    # FilePicker para Importar Excel
     def procesar_excel_seleccionado(e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
             ruta_excel = e.files[0].path
@@ -130,7 +181,7 @@ def vista_familia(pagina: ft.Page):
     file_picker_excel = ft.FilePicker(on_result=procesar_excel_seleccionado)
     pagina.overlay.append(file_picker_excel)
 
-    # 📥 FilePicker para Importar JSON
+    # FilePicker para Importar JSON
     def procesar_json_seleccionado(e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
             ruta_json = e.files[0].path
@@ -161,7 +212,7 @@ def vista_familia(pagina: ft.Page):
     )
     pagina.overlay.append(file_picker_importar_json)
 
-    # ✅ Eliminar familia desde BD
+    #  Eliminar familia desde BD
     def eliminar_familia(fid, e):
         session = SessionLocal()
         familia = session.query(Familia).filter(Familia.id == fid).first()
@@ -172,7 +223,7 @@ def vista_familia(pagina: ft.Page):
         actualizar_tabla()
         e.page.update()
 
-    # ✅ Filtrar datos desde BD (Carga explícita de Calle y Miembros)
+    #  Filtrar datos desde BD (Carga explícita de Calle y Miembros)
     def filtrar_datos():
         session = SessionLocal()
         familias = (
@@ -194,18 +245,36 @@ def vista_familia(pagina: ft.Page):
             if filtro_calle.current.value and filtro_calle.current.value != ""
             else None
         )
+        edad_filtro = filtro_edad.current.value if filtro_edad.current else None
+        campo_busqueda = tipo_busqueda.current.value or "Nombre"
 
         filtradas = []
         for f in familias:
-            nombres = f.nombres_jefe.lower() if f.nombres_jefe else ""
-            apellidos = f.apellidos_jefe.lower() if f.apellidos_jefe else ""
-            cedula = f.cedula_jefe.lower() if f.cedula_jefe else ""
-
             nombre_calle = f.calle.nombre if f.calle else ""
+            personas = [f.fecha_nacimiento_jefe] + [m.fecha_nacimiento for m in f.miembros]
+            nombres = [
+                f"{f.nombres_jefe} {f.apellidos_jefe}".lower()
+            ] + [f"{m.nombres} {m.apellidos}".lower() for m in f.miembros]
+            cedulas = [f.cedula_jefe] + [m.cedula for m in f.miembros]
+            coincide_edad = (
+                not edad_filtro
+                or any(_persona_esta_en_rango(fecha, edad_filtro) for fecha in personas)
+            )
+            if not texto:
+                coincide_busqueda = True
+            elif campo_busqueda == "Nombre":
+                coincide_busqueda = any(texto in nombre for nombre in nombres)
+            elif campo_busqueda == "Cédula":
+                coincide_busqueda = any(texto in (cedula or "").lower() for cedula in cedulas)
+            else:
+                coincide_busqueda = any(
+                    texto in calcular_edad_detallada(fecha).lower()
+                    for fecha in personas
+                )
 
-            if (texto in nombres or texto in apellidos or texto in cedula) and (
+            if coincide_busqueda and (
                 calle_filtro in nombre_calle.lower() if calle_filtro else True
-            ):
+            ) and coincide_edad:
                 filtradas.append(f)
         return filtradas
 
@@ -214,6 +283,22 @@ def vista_familia(pagina: ft.Page):
         total_personas = sum(
             len(f.miembros) + 1 for f in resultados_filtrados
         )
+        edades = [
+            f.fecha_nacimiento_jefe
+            for f in resultados_filtrados
+        ] + [
+            miembro.fecha_nacimiento
+            for f in resultados_filtrados
+            for miembro in f.miembros
+        ]
+        total_menores = sum(
+            1 for fecha in edades
+            if _edad_en_meses(fecha) is not None and _edad_en_meses(fecha) < 216
+        )
+        total_mayores = sum(
+            1 for fecha in edades
+            if _edad_en_meses(fecha) is not None and _edad_en_meses(fecha) >= 216
+        )
 
         tarjeta_familias.current.content.controls[1].value = str(
             total_familias
@@ -221,9 +306,307 @@ def vista_familia(pagina: ft.Page):
         tarjeta_personas.current.content.controls[1].value = str(
             total_personas
         )
+        tarjeta_menores.current.content.controls[1].value = str(total_menores)
+        tarjeta_mayores.current.content.controls[1].value = str(total_mayores)
 
         tarjeta_familias.current.update()
         tarjeta_personas.current.update()
+        tarjeta_menores.current.update()
+        tarjeta_mayores.current.update()
+
+    def mostrar_detalle(familia, e):
+        personas = [
+            ft.Text(
+                f"Jefe: {familia.nombres_jefe} {familia.apellidos_jefe} | "
+                f"ID: {familia.tipo_id}-{familia.cedula_jefe} | "
+                f"Edad: {calcular_edad_detallada(familia.fecha_nacimiento_jefe)}",
+                weight="bold",
+            )
+        ]
+        if familia.miembros:
+            personas.append(ft.Divider())
+            personas.append(ft.Text("Carga familiar", weight="bold"))
+            personas.extend(
+                ft.Text(
+                    f"{miembro.nombres} {miembro.apellidos} | "
+                    f"{miembro.parentesco} | ID: {miembro.tipo_id}-{miembro.cedula} | "
+                    f"Edad: {calcular_edad_detallada(miembro.fecha_nacimiento)}"
+                )
+                for miembro in familia.miembros
+            )
+        else:
+            personas.append(ft.Text("No tiene carga familiar registrada."))
+
+        dialogo = ft.AlertDialog(
+            title=ft.Text(f"Registro de {familia.nombres_jefe} {familia.apellidos_jefe}"),
+            content=ft.Column(personas, tight=True, scroll=ft.ScrollMode.AUTO),
+            actions=[ft.TextButton("Cerrar", on_click=lambda ev: e.page.close(dialogo))],
+        )
+        e.page.dialog = dialogo
+        dialogo.open = True
+        e.page.update()
+
+    def editar_carga_familiar(familia, e):
+        e.page.snack_bar = ft.SnackBar(ft.Text("Abriendo editor de carga familiar..."))
+        e.page.snack_bar.open = True
+        e.page.update()
+        session = SessionLocal()
+        familia = (
+            session.query(Familia)
+            .options(joinedload(Familia.miembros))
+            .filter(Familia.id == familia.id)
+            .first()
+        )
+        session.close()
+        if not familia:
+            e.page.snack_bar = ft.SnackBar(ft.Text("No se encontró la familia seleccionada"))
+            e.page.snack_bar.open = True
+            e.page.update()
+            return
+
+        nombre = ft.TextField(label="Nombres", width=220)
+        apellido = ft.TextField(label="Apellidos", width=220)
+        tipo_id = ft.Dropdown(
+            label="Tipo de ID",
+            width=120,
+            value="V",
+            options=[ft.dropdown.Option("V"), ft.dropdown.Option("E")],
+        )
+        cedula = ft.TextField(label="Cédula", width=180)
+        parentesco = ft.TextField(label="Parentesco", width=180)
+        fecha_nacimiento = ft.TextField(
+            label="Fecha de nacimiento", width=190, read_only=True
+        )
+        miembro_actual = [None]
+        lista_miembros = ft.Column([], scroll=ft.ScrollMode.AUTO, height=220)
+
+        def limpiar_formulario():
+            miembro_actual[0] = None
+            nombre.value = ""
+            apellido.value = ""
+            tipo_id.value = "V"
+            cedula.value = ""
+            parentesco.value = ""
+            fecha_nacimiento.value = ""
+
+        def cargar_miembro(miembro):
+            miembro_actual[0] = miembro
+            nombre.value = miembro.nombres
+            apellido.value = miembro.apellidos
+            tipo_id.value = miembro.tipo_id or "V"
+            cedula.value = miembro.cedula if miembro.cedula != "No posee" else ""
+            parentesco.value = miembro.parentesco
+            fecha_nacimiento.value = (
+                miembro.fecha_nacimiento.strftime("%d-%m-%Y")
+                if miembro.fecha_nacimiento
+                else ""
+            )
+            e.page.update()
+
+        def eliminar_miembro(miembro, ev):
+            def confirmar_eliminacion(confirmacion_ev):
+                session = SessionLocal()
+                miembro_bd = session.query(Miembro).filter(
+                    Miembro.id == miembro.id,
+                    Miembro.familia_id == familia.id,
+                ).first()
+                if miembro_bd:
+                    session.delete(miembro_bd)
+                    session.commit()
+                session.close()
+                
+                ev.page.close(dialogo_confirmacion)
+                limpiar_formulario()
+                refrescar_lista()
+                
+                # REFRESCAR A TABELA DA TELA PRINCIPAL
+                actualizar_tabla()
+                ev.page.update()
+
+            dialogo_confirmacion = ft.AlertDialog(
+                title=ft.Text("Eliminar integrante"),
+                content=ft.Text(
+                    f"¿Deseas eliminar a {miembro.nombres} {miembro.apellidos} "
+                    "de esta carga familiar?"
+                ),
+                actions=[
+                    ft.TextButton(
+                        "Cancelar",
+                        on_click=lambda confirmacion_ev: ev.page.close(
+                            dialogo_confirmacion
+                        ),
+                    ),
+                    ft.ElevatedButton(
+                        "Eliminar",
+                        bgcolor=COLOR_ROJO,
+                        color=COLOR_BLANCO,
+                        on_click=confirmar_eliminacion,
+                    ),
+                ],
+            )
+            ev.page.open(dialogo_confirmacion)
+
+        def refrescar_lista():
+            session = SessionLocal()
+            miembros_actualizados = (
+                session.query(Miembro)
+                .filter(Miembro.familia_id == familia.id)
+                .order_by(Miembro.id)
+                .all()
+            )
+            session.close()
+            lista_miembros.controls = [
+                ft.Row(
+                    [
+                        ft.Text(
+                            f"{miembro.nombres} {miembro.apellidos} - {miembro.parentesco}",
+                            expand=True,
+                        ),
+                        ft.IconButton(
+                            icon=ft.Icons.EDIT,
+                            tooltip="Editar integrante",
+                            icon_color=COLOR_VERDE,
+                            on_click=lambda ev, m=miembro: cargar_miembro(m),
+                        ),
+                        ft.IconButton(
+                            icon=ft.Icons.DELETE,
+                            tooltip="Eliminar integrante",
+                            icon_color=COLOR_ROJO,
+                            on_click=lambda ev, m=miembro: eliminar_miembro(m, ev),
+                        ),
+                    ]
+                )
+                for miembro in miembros_actualizados
+            ]
+        def guardar_miembro(ev):
+            if not nombre.value.strip() or not apellido.value.strip() or not fecha_nacimiento.value:
+                ev.page.snack_bar = ft.SnackBar(
+                    ft.Text("Completa nombres, apellidos y fecha de nacimiento")
+                )
+                ev.page.snack_bar.open = True
+                ev.page.update()
+                return
+
+            try:
+                try:
+                    fecha = datetime.datetime.strptime(
+                        fecha_nacimiento.value, "%d-%m-%Y"
+                    ).date()
+                except ValueError:
+                    fecha = datetime.datetime.strptime(
+                        fecha_nacimiento.value, "%Y-%m-%d"
+                    ).date()
+            except ValueError:
+                ev.page.snack_bar = ft.SnackBar(
+                    ft.Text("La fecha debe tener el formato DD-MM-AAAA")
+                )
+                ev.page.snack_bar.open = True
+                ev.page.update()
+                return
+
+            cedula_valor = cedula.value.strip() or "No posee"
+            session = SessionLocal()
+            consulta = session.query(Miembro).filter(Miembro.cedula == cedula_valor)
+            if miembro_actual[0] is not None:
+                consulta = consulta.filter(Miembro.id != miembro_actual[0].id)
+            if cedula_valor != "No posee" and consulta.first():
+                session.close()
+                ev.page.snack_bar = ft.SnackBar(
+                    ft.Text("Ya existe un integrante con esa cédula")
+                )
+                ev.page.snack_bar.open = True
+                ev.page.update()
+                return
+
+            familia_bd = session.query(Familia).filter(Familia.id == familia.id).first()
+            if miembro_actual[0] is None:
+                miembro_bd = Miembro(
+                    familia_id=familia.id,
+                    es_beneficiario="No",
+                    bonos="Ninguno",
+                )
+                session.add(miembro_bd)
+            else:
+                miembro_bd = session.query(Miembro).filter(
+                    Miembro.id == miembro_actual[0].id
+                ).first()
+
+            if not familia_bd or not miembro_bd:
+                session.close()
+                return
+
+            miembro_bd.nombres = nombre.value.strip()
+            miembro_bd.apellidos = apellido.value.strip()
+            miembro_bd.tipo_id = tipo_id.value or "V"
+            miembro_bd.cedula = cedula_valor
+            miembro_bd.fecha_nacimiento = fecha
+            miembro_bd.parentesco = parentesco.value.strip() or "Otro"
+
+            try:
+                session.commit()
+                session.close()
+
+                limpiar_formulario()
+                refrescar_lista()
+                
+                # REFRESCAR A TELA E A TABELA PRINCIPAL
+                actualizar_tabla()
+                ev.page.update()
+
+            except Exception as error:
+                session.rollback()
+                session.close()
+                ev.page.snack_bar = ft.SnackBar(
+                    ft.Text(f"No se pudo guardar el integrante: {error}")
+                )
+                ev.page.snack_bar.open = True
+                ev.page.update()
+                return
+        boton_fecha = ft.IconButton(
+            icon=ft.Icons.CALENDAR_MONTH,
+            icon_color=COLOR_VERDE,
+            tooltip="Seleccionar fecha",
+            on_click=lambda ev: abrir_datepicker_solo_fecha(
+                ev, fecha_nacimiento, formato="%d-%m-%Y"
+            ),
+        )
+        formulario = ft.Column(
+            [
+                ft.Text("Agregar o editar integrante", weight="bold"),
+                ft.Row([nombre, apellido, tipo_id, cedula], wrap=True),
+                ft.Row([parentesco, fecha_nacimiento, boton_fecha], wrap=True),
+                ft.Row(
+                    [
+                        ft.ElevatedButton(
+                            "Guardar integrante",
+                            icon=ft.Icons.SAVE,
+                            bgcolor=COLOR_VERDE,
+                            color=COLOR_BLANCO,
+                            on_click=guardar_miembro,
+                        ),
+                        ft.TextButton("Limpiar", on_click=lambda ev: (limpiar_formulario(), ev.page.update())),
+                    ]
+                ),
+                ft.Divider(),
+                ft.Text("Integrantes registrados", weight="bold"),
+                lista_miembros,
+            ],
+            tight=True,
+            scroll=ft.ScrollMode.AUTO,
+        )
+        dialogo = ft.AlertDialog(
+            title=ft.Text(
+                f"Editar carga familiar de {familia.nombres_jefe} {familia.apellidos_jefe}"
+            ),
+            content=formulario,
+            actions=[
+                ft.TextButton("Cerrar", on_click=lambda ev: ev.page.close(dialogo))
+            ],
+        )
+        refrescar_lista()
+        e.page.dialog = dialogo
+        dialogo.open = True
+        e.page.update()
 
     def actualizar_tabla():
         nonlocal resultados_filtrados
@@ -281,18 +664,36 @@ def vista_familia(pagina: ft.Page):
                             ft.Container(
                                 ft.Row(
                                     [
-                                        ft.IconButton(
-                                            icon=ft.Icons.DELETE,
-                                            icon_color=COLOR_ROJO,
-                                            tooltip="Eliminar",
-                                            on_click=lambda e, fid=f.id: eliminar_familia(
-                                                fid, e
+                                        ft.Container(
+                                            content=ft.Row(
+                                                [
+                                                    ft.Icon(ft.Icons.EDIT, color=COLOR_VERDE),
+                                                    ft.Text("Editar carga", color=COLOR_VERDE),
+                                                ],
+                                                spacing=4,
                                             ),
+                                            tooltip="Editar o agregar carga familiar",
+                                            padding=ft.padding.symmetric(horizontal=6, vertical=4),
+                                            on_click=lambda e, fid=f.id: e.page.go(
+                                                f"/registro_familia?edit={fid}"
+                                            ),
+                                        ),
+                                        ft.Container(
+                                            content=ft.Icon(ft.Icons.VISIBILITY, color=COLOR_VERDE),
+                                            tooltip="Ver registro y carga familiar",
+                                            padding=8,
+                                            on_click=lambda e, familia=f: mostrar_detalle(familia, e),
+                                        ),
+                                        ft.Container(
+                                            content=ft.Icon(ft.Icons.DELETE, color=COLOR_ROJO),
+                                            tooltip="Eliminar",
+                                            padding=8,
+                                            on_click=lambda e, fid=f.id: eliminar_familia(fid, e),
                                         ),
                                     ],
                                     spacing=5,
                                 ),
-                                width=70,
+                                width=120,
                             )
                         ),
                     ]
@@ -360,12 +761,52 @@ def vista_familia(pagina: ft.Page):
         on_change=lambda e: cambiar_pagina(0),
     )
 
+    filtro_edad = ft.Ref[ft.Dropdown]()
+    filtro_edad.current = ft.Dropdown(
+        label="Filtrar por edad",
+        width=260,
+        options=[
+            ft.dropdown.Option(""),
+            ft.dropdown.Option("Bebés (0-23 meses)"),
+            ft.dropdown.Option("Niños (2-11 años)"),
+            ft.dropdown.Option("Adolescentes (12-17 años)"),
+            ft.dropdown.Option("Adultos (18-59 años)"),
+            ft.dropdown.Option("Adultos mayores (60+)")
+        ],
+        on_change=lambda e: cambiar_pagina(0),
+    )
+
+    tipo_busqueda.current = ft.Dropdown(
+        label="Buscar por",
+        width=180,
+        value="Nombre",
+        options=[
+            ft.dropdown.Option("Nombre"),
+            ft.dropdown.Option("Cédula"),
+            ft.dropdown.Option("Edad"),
+        ],
+        on_change=lambda e: actualizar_hint_busqueda(),
+    )
+
     buscador.current = ft.TextField(
-        hint_text="Buscar por nombre o cédula",
+        hint_text="Escriba un nombre",
         prefix_icon=ft.Icons.SEARCH,
         width=300,
         on_change=lambda e: cambiar_pagina(0),
     )
+
+    def actualizar_hint_busqueda():
+        ayudas = {
+            "Nombre": "Escriba un nombre",
+            "Cédula": "Escriba una cédula",
+            "Edad": "Escriba una edad, meses o RN",
+        }
+        buscador.current.hint_text = ayudas.get(
+            tipo_busqueda.current.value, "Buscar"
+        )
+        buscador.current.value = ""
+        buscador.current.update()
+        cambiar_pagina(0)
 
     # 🟢 Botón para activar el FilePicker de exportación a Excel
     boton_exportar_excel = ft.IconButton(
@@ -400,17 +841,20 @@ def vista_familia(pagina: ft.Page):
         content=ft.Row(
             [
                 filtro_calle.current,
+                filtro_edad.current,
+                tipo_busqueda.current,
                 buscador.current,
                 boton_exportar_excel,
                 boton_exportar_json,
                 boton_exportar,
             ],
             spacing=15,
+            wrap=True,
         ),
         bgcolor="#ffffff66",
         padding=20,
         border_radius=10,
-        width=840,
+        width=1400,
         alignment=ft.alignment.center_left,
     )
 
@@ -450,11 +894,40 @@ def vista_familia(pagina: ft.Page):
         width=250,
     )
 
-    resumen = ft.Row(
-        [tarjeta_familias.current, tarjeta_personas.current], spacing=20
+    tarjeta_menores.current = ft.Container(
+        content=ft.Column([
+            ft.Text("Menores de edad (<18)", size=14, color=COLOR_GRIS, weight="bold"),
+            ft.Text("0", size=22, weight="bold", color=COLOR_NEGRO),
+        ]),
+        bgcolor=COLOR_BLANCO,
+        padding=20,
+        border_radius=10,
+        width=250,
     )
 
-    # 📌 ENCABEZADO: Botones principales (Incluye Cargar Censo Excel y Cargar Respaldo JSON)
+    tarjeta_mayores.current = ft.Container(
+        content=ft.Column([
+            ft.Text("Mayores de edad (18+)", size=14, color=COLOR_GRIS, weight="bold"),
+            ft.Text("0", size=22, weight="bold", color=COLOR_NEGRO),
+        ]),
+        bgcolor=COLOR_BLANCO,
+        padding=20,
+        border_radius=10,
+        width=250,
+    )
+
+    resumen = ft.Row(
+        [
+            tarjeta_familias.current,
+            tarjeta_personas.current,
+            tarjeta_menores.current,
+            tarjeta_mayores.current,
+        ],
+        spacing=20,
+        wrap=True,
+    )
+
+    # ENCABEZADO: Botones principales (Incluye Cargar Censo Excel y Cargar Respaldo JSON)
     encabezado = ft.Row(
         [
             ft.Text(
@@ -499,7 +972,7 @@ def vista_familia(pagina: ft.Page):
             ft.DataColumn(ft.Text("CÉDULA")),
             ft.DataColumn(ft.Text("TELÉFONO")),
             ft.DataColumn(ft.Text("DIRECCIÓN")),
-            ft.DataColumn(ft.Text("CARGA FAMILIAR")),
+                ft.DataColumn(ft.Text("CARGA FAMILIAR")),
             ft.DataColumn(ft.Text("ACCIONES")),
         ],
         rows=[],
@@ -581,11 +1054,19 @@ def exportar_pdf(e: ft.FilePickerUploadEvent):
     e.page.update()
 
 
-def vista_registro_familia():
+def vista_registro_familia(pagina=None, edit_id=None):
     miembros = []
 
     session = SessionLocal()
     calles = session.query(Calle).all()
+    familia_edicion = None
+    if edit_id is not None:
+        familia_edicion = (
+            session.query(Familia)
+            .options(joinedload(Familia.miembros))
+            .filter(Familia.id == edit_id)
+            .first()
+        )
     session.close()
 
     # Mapear objeto Calle a Dropdown usando su ID como key/key_data
@@ -777,11 +1258,14 @@ def vista_registro_familia():
 
         session = SessionLocal()
         if cedula_valor != "No posee":
-            existente_miembro = (
-                session.query(Miembro)
-                .filter(Miembro.cedula == cedula_valor)
-                .first()
+            consulta_miembro = session.query(Miembro).filter(
+                Miembro.cedula == cedula_valor
             )
+            if familia_edicion is not None:
+                consulta_miembro = consulta_miembro.filter(
+                    Miembro.familia_id != edit_id
+                )
+            existente_miembro = consulta_miembro.first()
             if existente_miembro:
                 snackbar = ft.SnackBar(
                     ft.Text(
@@ -920,7 +1404,7 @@ def vista_registro_familia():
             .filter(Familia.cedula_jefe == cedula_jefe.value.strip())
             .first()
         )
-        if existente_jefe:
+        if existente_jefe and (familia_edicion is None or existente_jefe.id != edit_id):
             snackbar = ft.SnackBar(
                 ft.Text("⚠️ Ya existe una familia registrada con esa cédula")
             )
@@ -944,21 +1428,32 @@ def vista_registro_familia():
             except Exception:
                 fecha_jefe = None
 
-        nueva_familia = Familia(
-            nombres_jefe=nombres_jefe.value,
-            apellidos_jefe=apellidos_jefe.value,
-            tipo_id=tipo_cedula_jefe.value or "V",
-            cedula_jefe=cedula_jefe.value,
-            telefono_jefe=telefono_jefe.value,
-            fecha_nacimiento_jefe=fecha_jefe,
-            calle_id=int(calle_jefe.value),
-            casa_num=numero_casa_jefe.value,
-            es_beneficiario=beneficiario.value or "No",
-            bono=" | ".join(
+        datos_familia = {
+            "nombres_jefe": nombres_jefe.value,
+            "apellidos_jefe": apellidos_jefe.value,
+            "tipo_id": tipo_cedula_jefe.value or "V",
+            "cedula_jefe": cedula_jefe.value,
+            "telefono_jefe": telefono_jefe.value,
+            "fecha_nacimiento_jefe": fecha_jefe,
+            "calle_id": int(calle_jefe.value),
+            "casa_num": numero_casa_jefe.value,
+            "es_beneficiario": beneficiario.value or "No",
+            "bono": " | ".join(
                 nombre for nombre, control in bonos_seleccionados.items()
                 if control.value
             ) or "Ninguno",
-        )
+        }
+
+        if familia_edicion is not None:
+            nueva_familia = session.query(Familia).filter(Familia.id == edit_id).first()
+            if not nueva_familia:
+                session.close()
+                return
+            for clave, valor in datos_familia.items():
+                setattr(nueva_familia, clave, valor)
+            nueva_familia.miembros.clear()
+        else:
+            nueva_familia = Familia(**datos_familia)
 
         for m in miembros:
             fecha_m = None
@@ -987,16 +1482,81 @@ def vista_registro_familia():
             )
             nueva_familia.miembros.append(nuevo_miembro)
 
-        session.add(nueva_familia)
         session.commit()
         session.close()
 
-        snackbar = ft.SnackBar(ft.Text("✅ Familia guardada correctamente"))
+        mensaje = "✅ Familia actualizada correctamente" if familia_edicion else "✅ Familia guardada correctamente"
+        snackbar = ft.SnackBar(ft.Text(mensaje))
         e.page.overlay.append(snackbar)
         snackbar.open = True
         e.page.update()
 
         e.page.go("/familia")
+
+    if familia_edicion:
+        nombres_jefe.value = familia_edicion.nombres_jefe or ""
+        apellidos_jefe.value = familia_edicion.apellidos_jefe or ""
+        tipo_cedula_jefe.value = familia_edicion.tipo_id or "V"
+        cedula_jefe.value = familia_edicion.cedula_jefe or ""
+        telefono_jefe.value = familia_edicion.telefono_jefe or ""
+        calle_jefe.value = str(familia_edicion.calle_id)
+        numero_casa_jefe.value = familia_edicion.casa_num or ""
+        fecha_nacimiento_jefe.value = (
+            familia_edicion.fecha_nacimiento_jefe.strftime("%d-%m-%Y")
+            if familia_edicion.fecha_nacimiento_jefe else ""
+        )
+        edad_jefe.value = calcular_edad_detallada(familia_edicion.fecha_nacimiento_jefe)
+        beneficiario.value = familia_edicion.es_beneficiario or "No"
+        bonos_guardados = (familia_edicion.bono or "").split(" | ")
+        for nombre_bono, control in bonos_seleccionados.items():
+            control.value = nombre_bono in bonos_guardados
+
+        for miembro in familia_edicion.miembros:
+            miembro_data = {
+                "nombres": miembro.nombres,
+                "apellidos": miembro.apellidos,
+                "tipo": miembro.tipo_id or "V",
+                "cedula": miembro.cedula,
+                "fecha_nacimiento": miembro.fecha_nacimiento.strftime("%d-%m-%Y") if miembro.fecha_nacimiento else "",
+                "edad": calcular_edad_detallada(miembro.fecha_nacimiento),
+                "parentesco": miembro.parentesco or "Otro",
+                "es_beneficiario": miembro.es_beneficiario or "No",
+                "bonos": miembro.bonos or "Ninguno",
+            }
+            miembros.append(miembro_data)
+            fila_ref = [None]
+
+            def editar_existente(ev, data=miembro_data, fila_holder=fila_ref):
+                nombres_miembro.value = data["nombres"]
+                apellidos_miembro.value = data["apellidos"]
+                tipo_cedula_miembro.current.value = data["tipo"]
+                cedula_miembro.value = "" if data["cedula"] == "No posee" else data["cedula"]
+                fecha_nacimiento_miembro.value = data["fecha_nacimiento"]
+                edad_miembro.value = data["edad"]
+                parentesco_miembro.current.value = data["parentesco"]
+                beneficiario_miembro.value = data["es_beneficiario"]
+                bonos_miembro.value = data["bonos"]
+                miembros.remove(data)
+                tabla_miembros.controls.remove(fila_holder[0])
+                ev.page.update()
+
+            def eliminar_existente(ev, data=miembro_data, fila_holder=fila_ref):
+                miembros.remove(data)
+                tabla_miembros.controls.remove(fila_holder[0])
+                ev.page.update()
+
+            fila_ref[0] = ft.Row([
+                ft.Text(miembro_data["nombres"], width=160),
+                ft.Text(miembro_data["apellidos"], width=160),
+                ft.Text(miembro_data["tipo"], width=120),
+                ft.Text(miembro_data["cedula"], width=170),
+                ft.Text(miembro_data["fecha_nacimiento"], width=160),
+                ft.Text(miembro_data["edad"], width=100),
+                ft.Text(miembro_data["parentesco"], width=160),
+                ft.IconButton(icon=ft.Icons.EDIT, icon_color=COLOR_VERDE, tooltip="Editar", on_click=editar_existente),
+                ft.IconButton(icon=ft.Icons.DELETE, icon_color=COLOR_ROJO, tooltip="Eliminar", on_click=eliminar_existente),
+            ], spacing=10)
+            tabla_miembros.controls.append(fila_ref[0])
 
     boton_añadir = ft.ElevatedButton(
         "Añadir",
@@ -1006,7 +1566,7 @@ def vista_registro_familia():
         on_click=añadir_miembro,
     )
     boton_guardar = ft.ElevatedButton(
-        "Guardar Familia",
+        "Actualizar Familia" if familia_edicion else "Guardar Familia",
         bgcolor=COLOR_VERDE,
         color=COLOR_BLANCO,
         on_click=guardar_familia,
@@ -1018,13 +1578,15 @@ def vista_registro_familia():
     return ft.Container(
         content=ft.Column([
             ft.Text(
-                "Registro de Nueva Familia",
+                "Editar Familia" if familia_edicion else "Registro de Nueva Familia",
                 size=26,
                 weight="bold",
                 color=COLOR_NEGRO,
             ),
             ft.Text(
-                "Complete los datos para registrar una nueva familia en el sistema.",
+                "Modifique los datos y la carga familiar."
+                if familia_edicion
+                else "Complete los datos para registrar una nueva familia en el sistema.",
                 size=14,
                 color=COLOR_GRIS,
             ),

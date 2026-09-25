@@ -133,7 +133,7 @@ def vista_proteccion_integral(pagina: ft.Page):
                 resumen,
                 ft.Divider(),
                 ft.Text("Padrón de ayudas y protección", size=16, weight=ft.FontWeight.BOLD, color=COLOR_NEGRO),
-                ft.Container(content=tabla_padron, padding=10, bgcolor="#ffffff66", border=ft.border.all(1, COLOR_GRIS), border_radius=8),
+                ft.Container(content=tabla_padron, padding=10, bgcolor="#83d5e877", border=ft.border.all(1, COLOR_GRIS), border_radius=8),
             ],
             spacing=18,
             scroll=ft.ScrollMode.AUTO,

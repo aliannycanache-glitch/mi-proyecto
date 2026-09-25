@@ -1,15 +1,37 @@
 import flet as ft
 import datetime
 
+
+def calcular_edad_detallada(fecha_nacimiento, hoy=None):
+    """Devuelve una edad legible, incluyendo meses para menores de dos años."""
+    if not fecha_nacimiento:
+        return ""
+
+    hoy = hoy or datetime.date.today()
+    if isinstance(fecha_nacimiento, datetime.datetime):
+        fecha_nacimiento = fecha_nacimiento.date()
+
+    meses = (hoy.year - fecha_nacimiento.year) * 12 + hoy.month - fecha_nacimiento.month
+    if hoy.day < fecha_nacimiento.day:
+        meses -= 1
+
+    if meses <= 0:
+        return "RN" if hoy == fecha_nacimiento else "1 mes"
+    if meses < 24:
+        return f"{meses} mes" if meses == 1 else f"{meses} meses"
+
+    años = hoy.year - fecha_nacimiento.year - (
+        (hoy.month, hoy.day) < (fecha_nacimiento.month, fecha_nacimiento.day)
+    )
+    return f"{años} año" if años == 1 else f"{años} años"
+
 def abrir_datepicker_fecha_nacimiento(e, campo_fecha: ft.TextField, campo_edad: ft.TextField,
                                       formato="%Y-%m-%d", fecha_minima=datetime.datetime(1900, 1, 1)):
     def on_change(ev: ft.ControlEvent):
         if isinstance(ev.control.value, datetime.datetime):
             dt = ev.control.value
             campo_fecha.value = dt.strftime(formato)
-            hoy = datetime.date.today()
-            edad = hoy.year - dt.year - ((hoy.month, hoy.day) < (dt.month, dt.day))
-            campo_edad.value = str(edad)
+            campo_edad.value = calcular_edad_detallada(dt)
             e.page.update()
 
     e.page.open(

@@ -18,7 +18,7 @@ def main(pagina: ft.Page):
     print("[DEBUG] main() iniciado")
     pagina.title = "ComuniDatos"
     pagina.theme_mode = "light"
-    pagina.bgcolor = "#eaf6ff"
+    pagina.bgcolor = "#cae6fbbe"
     pagina.padding = 0
     pagina.window.maximized = True
 
@@ -29,7 +29,7 @@ def main(pagina: ft.Page):
                     content=ft.Image(
                         src="imagenes/Comunidatoslogo.png",
                         fit=ft.ImageFit.CONTAIN,
-                        opacity=0.07,
+                        opacity=0.35,
                     ),
                     alignment=ft.alignment.center,
                     expand=True,
@@ -47,10 +47,10 @@ def main(pagina: ft.Page):
             content=fondo_de_aplicacion(contenido),
             alignment=ft.alignment.center,
             padding=18,
-            margin=0,
-            border_radius=18,
+            margin=0.03,
+            border_radius=28,
             expand=True,
-            bgcolor="#eaf6ff",
+            bgcolor="#d4e7f6f0",
         )
 
     rutas = {
@@ -84,7 +84,7 @@ def main(pagina: ft.Page):
     ]
 
     pagina.drawer = ft.NavigationDrawer(
-        bgcolor="#eaf6ff",
+        bgcolor="#d6ebfbdc",
         elevation=2,
         controls=[
             ft.Container(
@@ -93,7 +93,7 @@ def main(pagina: ft.Page):
                     ft.Text("Gestión comunitaria", size=12, color=COLOR_GRIS),
                 ], spacing=2),
                 padding=ft.padding.only(left=18, top=20, right=18, bottom=10),
-                bgcolor="#eaf6ff",
+                bgcolor="#eaf6ff5a",
             ),
             ft.NavigationDrawerDestination(icon=ft.Icons.DASHBOARD, label="Panel Principal"),
             ft.NavigationDrawerDestination(icon=ft.Icons.GROUP, label="Censo de Familia"),
@@ -115,8 +115,12 @@ def main(pagina: ft.Page):
             return vista_registro()
         elif ruta == "/panel":
             return vista_panel(pagina)
-        elif ruta == "/registro_familia":
-            return vista_registro_familia()
+        elif ruta.startswith("/registro_familia"):
+            import urllib.parse
+            parsed = urllib.parse.urlparse(ruta)
+            params = urllib.parse.parse_qs(parsed.query)
+            edit_id = int(params.get("edit", [None])[0]) if "edit" in params else None
+            return vista_registro_familia(pagina, edit_id)
         elif ruta == "/registro_gas":
             return vista_registro_gas()
         elif ruta == "/residencia":
