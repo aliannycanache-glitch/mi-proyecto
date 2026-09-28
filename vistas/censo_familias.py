@@ -1007,102 +1007,128 @@ def vista_registro_familia(pagina=None, edit_id=None):
         e.page.update()
 
     def guardar_familia(e):
-        if not nombres_jefe.value.strip() or not apellidos_jefe.value.strip() or not cedula_jefe.value.strip():
-            snackbar = ft.SnackBar(ft.Text("Por favor completa los campos obligatorios del jefe de familia"))
-            e.page.overlay.append(snackbar)
-            snackbar.open = True
-            e.page.update()
+        # 1. Validaciones básicas de campos obligatorios
+        if not nombres_jefe.value or not nombres_jefe.value.strip():
+            e.page.open(ft.SnackBar(ft.Text("⚠️ Por favor ingresa los nombres del jefe de familia")))
             return
+
+        if not apellidos_jefe.value or not apellidos_jefe.value.strip():
+            e.page.open(ft.SnackBar(ft.Text("⚠️ Por favor ingresa los apellidos del jefe de familia")))
+            return
+
+        if not cedula_jefe.value or not cedula_jefe.value.strip():
+            e.page.open(ft.SnackBar(ft.Text("⚠️ Por favor ingresa la cédula del jefe de familia")))
+            return
+
         if not calle_jefe.value:
-            snackbar = ft.SnackBar(ft.Text("Por favor selecciona una calle"))
-            e.page.overlay.append(snackbar)
-            snackbar.open = True
-            e.page.update()
+            e.page.open(ft.SnackBar(ft.Text("⚠️ Por favor selecciona una calle")))
+            return
+
+        if not fecha_nacimiento_jefe.value:
+            e.page.open(ft.SnackBar(ft.Text("⚠️ Por favor selecciona la fecha de nacimiento del jefe")))
+            return
+
+        # 2. Conversión segura del ID de la calle
+        try:
+            calle_id_val = int(calle_jefe.value)
+        except (ValueError, TypeError):
+            e.page.open(ft.SnackBar(ft.Text("⚠️ Error con la calle seleccionada. Selecciona una calle válida.")))
             return
 
         session = SessionLocal()
+
+        # 3. Validación de cédula duplicada
+        cedula_clean = cedula_jefe.value.strip()
         existente_jefe = (
             session.query(Familia)
-            .filter(Familia.cedula_jefe == cedula_jefe.value.strip())
+            .filter(Familia.cedula_jefe == cedula_clean)
             .first()
         )
         if existente_jefe and (familia_edicion is None or existente_jefe.id != edit_id):
-            snackbar = ft.SnackBar(ft.Text("⚠️ Ya existe una familia registrada con esa cédula"))
-            e.page.overlay.append(snackbar)
-            snackbar.open = True
-            e.page.update()
+            e.page.open(ft.SnackBar(ft.Text("⚠️ Ya existe una familia registrada con esa cédula")))
             session.close()
             return
 
+        # 4. Procesamiento de la fecha de nacimiento del jefe
         fecha_jefe = None
         if fecha_nacimiento_jefe.value:
-            try:
+            for fmt in ("%d-%m-%Y", "%Y-%m-%d"):
                 try:
-                    fecha_jefe = datetime.datetime.strptime(fecha_nacimiento_jefe.value, "%d-%m-%Y").date()
+                    fecha_jefe = datetime.datetime.strptime(fecha_nacimiento_jefe.value.strip(), fmt).date()
+                    break
                 except ValueError:
-                    fecha_jefe = datetime.datetime.strptime(fecha_nacimiento_jefe.value, "%Y-%m-%d").date()
-            except Exception:
-                fecha_jefe = None
+                    pass
 
         datos_familia = {
             "nombres_jefe": nombres_jefe.value.strip(),
             "apellidos_jefe": apellidos_jefe.value.strip(),
             "tipo_id": tipo_cedula_jefe.value or "V",
-            "cedula_jefe": cedula_jefe.value.strip(),
-            "telefono_jefe": telefono_jefe.value.strip(),
+            "cedula_jefe": cedula_clean,
+            "telefono_jefe": telefono_jefe.value.strip() if telefono_jefe.value else "",
             "fecha_nacimiento_jefe": fecha_jefe,
-            "calle_id": int(calle_jefe.value),
-            "casa_num": numero_casa_jefe.value.strip(),
+            "calle_id": calle_id_val,
+            "casa_num": numero_casa_jefe.value.strip() if numero_casa_jefe.value else "",
             "es_beneficiario": beneficiario.value or "No",
             "bono": " | ".join(
-                nombre for nombre, control in bonos_seleccionados.items()
-                if control.value
+                nombre for nombre, control in bonos_seleccionados.items() if control.value
             ) or "Ninguno",
         }
 
-        if familia_edicion is not None:
-            nueva_familia = session.query(Familia).filter(Familia.id == edit_id).first()
-            if not nueva_familia:
-                session.close()
-                return
-            for clave, valor in datos_familia.items():
-                setattr(nueva_familia, clave, valor)
-            nueva_familia.miembros.clear()
-        else:
-            nueva_familia = Familia(**datos_familia)
+        # 5. Guardar o Actualizar en la base de datos
+        try:
+            if familia_edicion is not None:
+                nueva_familia = session.query(Familia).filter(Familia.id == edit_id).first()
+                if not nueva_familia:
+                    session.close()
+                    e.page.open(ft.SnackBar(ft.Text("⚠️ No se encontró la familia para editar")))
+                    return
+                
+                for clave, valor in datos_familia.items():
+                    setattr(nueva_familia, clave, valor)
+                
+                # Limpiar la carga familiar existente para resincronizarla
+                nueva_familia.miembros.clear()
+            else:
+                nueva_familia = Familia(**datos_familia)
 
-        for m in miembros:
-            fecha_m = None
-            if m["fecha_nacimiento"]:
-                try:
-                    try:
-                        fecha_m = datetime.datetime.strptime(m["fecha_nacimiento"], "%d-%m-%Y").date()
-                    except ValueError:
-                        fecha_m = datetime.datetime.strptime(m["fecha_nacimiento"], "%Y-%m-%d").date()
-                except Exception:
-                    fecha_m = None
+            # Insertar los miembros de la carga familiar agregados
+            for m in miembros:
+                fecha_m = None
+                if m.get("fecha_nacimiento"):
+                    for fmt in ("%d-%m-%Y", "%Y-%m-%d"):
+                        try:
+                            fecha_m = datetime.datetime.strptime(m["fecha_nacimiento"].strip(), fmt).date()
+                            break
+                        except ValueError:
+                            pass
 
-            nuevo_miembro = Miembro(
-                nombres=m["nombres"],
-                apellidos=m["apellidos"],
-                tipo_id=m["tipo"] or "V",
-                cedula=m["cedula"],
-                fecha_nacimiento=fecha_m,
-                parentesco=m["parentesco"],
-                es_beneficiario=m.get("es_beneficiario", "No"),
-                bonos=m.get("bonos", "Ninguno"),
-            )
-            nueva_familia.miembros.append(nuevo_miembro)
+                nuevo_miembro = Miembro(
+                    nombres=m["nombres"],
+                    apellidos=m["apellidos"],
+                    tipo_id=m.get("tipo") or "V",
+                    cedula=m.get("cedula") or "No posee",
+                    fecha_nacimiento=fecha_m,
+                    parentesco=m.get("parentesco") or "Otro",
+                    es_beneficiario=m.get("es_beneficiario", "No"),
+                    bonos=m.get("bonos", "Ninguno"),
+                )
+                nueva_familia.miembros.append(nuevo_miembro)
 
-        session.commit()
-        session.close()
+            if familia_edicion is None:
+                session.add(nueva_familia)
 
-        mensaje = "✅ Familia actualizada correctamente" if familia_edicion else "✅ Familia guardada correctamente"
-        snackbar = ft.SnackBar(ft.Text(mensaje))
-        e.page.overlay.append(snackbar)
-        snackbar.open = True
-        e.page.update()
-        e.page.go("/familia")
+            session.commit()
+            session.close()
+
+            # 6. Notificación y redirección exitosa
+            mensaje = "✅ Familia actualizada correctamente" if familia_edicion else "✅ Familia guardada correctamente"
+            e.page.open(ft.SnackBar(ft.Text(mensaje)))
+            e.page.go("/familia")
+
+        except Exception as err:
+            session.rollback()
+            session.close()
+            e.page.open(ft.SnackBar(ft.Text(f"❌ Error al guardar en base de datos: {str(err)}")))
 
     # CARGA PREVIA EN CASO DE EDICIÓN
     if familia_edicion:
