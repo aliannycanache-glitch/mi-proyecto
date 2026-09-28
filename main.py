@@ -1,3 +1,4 @@
+from backup_util import hacer_respaldo_automatico
 import flet as ft
 import datetime
 from colores import COLOR_VERDE, COLOR_GRIS, COLOR_BLANCO, COLOR_NEGRO, COLOR_ROJO
@@ -16,6 +17,7 @@ from vistas.proteccion_integral import vista_proteccion_integral, vista_registro
 
 def main(pagina: ft.Page):
     print("[DEBUG] main() iniciado")
+    hacer_respaldo_automatico()
     pagina.title = "ComuniDatos"
     pagina.theme_mode = "light"
     pagina.bgcolor = "#cae6fbbe"
